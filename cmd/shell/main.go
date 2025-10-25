@@ -22,6 +22,7 @@ type Book struct {
 func processCSV(r io.Reader) ([]Book, error) {
 	reader := csv.NewReader(r)
 	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
 
 	// Read and discard the header row.
 	_, err := reader.Read()
