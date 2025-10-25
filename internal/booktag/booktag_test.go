@@ -1,4 +1,4 @@
-package main
+package booktag
 
 import (
 	"reflect"
@@ -26,7 +26,7 @@ func TestProcessCSV(t *testing.T) {
 			// Raw string literal (backticks) used. The non-standard ISBN quotes
 			// (e.g., ="978..." and ="") have been manually cleaned to standard CSV
 			// format to prevent parsing errors.
-			inputCSV: header  + `
+			inputCSV: header + `
 43385914,Swipe to Unlock: The Primer on Technology and Business Strategy,Parth Detroja,"Detroja, Parth","Neel Mehta, Aditya   Agashe",,,0,4.22,Amazon Digital Services,Kindle Edition,325,2018,2017,,2025/10/23,to-read,to-read (#1182),to-read,,,,0,0
 2019095,A Practical Guide to Data Structures and Algorithms using Java (Chapman & Hall/CRC Applied Algorithms and Data Structures series),Sally A. Goldman,"Goldman, Sally A.",Kenneth J. Goldman,158488455X,9781584884552,0,4.50,Chapman and Hall/CRC,Hardcover,1054,2007,2007,,2025/10/23,to-read,to-read (#1181),to-read,,,,0,0
 21280882,Smartups: Lessons from Rob Ryan's Entrepreneur America Boot Camp for Start-Ups,Rob Ryan,"Ryan, Rob",David J. BenDaniel,,,0,3.24,Cornell University Press,Kindle Edition,240,2012,2002,,2025/10/23,to-read,to-read (#1180),to-read,,,,0,0
@@ -70,7 +70,7 @@ func TestProcessCSV(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := strings.NewReader(tc.inputCSV)
-			books, err := processCSV(r)
+			books, err := ProcessCSV(r)
 
 			if tc.expectError {
 				if err == nil {
