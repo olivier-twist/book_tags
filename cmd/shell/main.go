@@ -55,16 +55,13 @@ func main() {
 		log.Fatalf("Error processing CSV: %s", err)
 	}
 
-	// 3. Convert the slice of structs to JSON
-	// Using MarshalIndent for clean, readable output.
-	_, err = json.MarshalIndent(books, "", "  ")
+	untaggedBooks, err := booktag.GetUntaggedBooks(books)
+
 	if err != nil {
-		log.Fatalf("Error marshaling JSON: %s", err)
+		log.Fatalf("Error getting untagged books: %s", err)
 	}
 
-	// 4. Print the JSON to standard output
-	//fmt.Println(string(jsonData))
-	tagged_books, err := booktag.ProcessBooksWithGemini(books)
+	tagged_books, err := booktag.ProcessBooksWithGemini(untaggedBooks)
 	if err != nil {
 		log.Fatalf("Error processing books with Gemini: %s", err)
 	}

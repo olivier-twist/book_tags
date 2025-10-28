@@ -131,6 +131,46 @@ func ProcessBooksWithGemini(inputBooks []Book) ([]TaggedBook, error) {
 	return outputList, nil
 }
 
+// Return the books from goodreads_library_export.csv which are not in the database.
+func GetUntaggedBooks(allBooks []Book) ([]Book, error) {
+	// 1. Connect to the database
+	db, err := sql.Open("sqlite3", dbFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database file '%s': %w", dbFile, err)
+	}
+	defer db.Close()
+
+	// 2. Prepare a map to track tagged books
+	taggedBooksMap := make(map[string]bool)
+
+	// 3. Query the database for existing tagged books
+	rows, err := db.QueryContext(context.Background(), `SELECT title, author, authorLF, additionalAuthors FROM BOOK`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query tagged books: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var title, author, authorLF, additionalAuthors string
+		if err := rows.Scan(&title, &author, &authorLF, &additionalAuthors); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		key := fmt.Sprintf("%s|%s|%s|%s", title, author, authorLF, additionalAuthors)
+		taggedBooksMap[key] = true
+	}
+
+	// 4. Filter allBooks to find untagged books
+	var untaggedBooks []Book
+	for _, book := range allBooks {
+		key := fmt.Sprintf("%s|%s|%s|%s", book.Title, book.Author, book.AuthorLF, book.AdditionalAuthors)
+		if !taggedBooksMap[key] {
+			untaggedBooks = append(untaggedBooks, book)
+		}
+	}
+
+	return untaggedBooks, nil
+}
+
 // insertTaggedBooks connects to the SQLite database and inserts all tagged books.
 func InsertTaggedBooks(taggedBooks []TaggedBook) error {
 	// --- New Step: Ensure the directory exists ---
