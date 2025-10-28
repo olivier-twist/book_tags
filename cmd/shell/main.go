@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -51,32 +49,20 @@ func main() {
 
 	// 2. Process the CSV data using the testable function
 	books, err := booktag.ProcessCSV(file)
+
 	if err != nil {
 		log.Fatalf("Error processing CSV: %s", err)
 	}
 
-	untaggedBooks, err := booktag.GetUntaggedBooks(books)
-
+	tagged_books, err := booktag.ProcessBooksWithLocalLLM(books, "llama3")
 	if err != nil {
-		log.Fatalf("Error getting untagged books: %s", err)
+		log.Fatalf("Error processing books with local LLM: %s", err)
 	}
-
-	tagged_books, err := booktag.ProcessBooksWithGemini(untaggedBooks)
-	if err != nil {
-		log.Fatalf("Error processing books with Gemini: %s", err)
-	}
-
-	// Convert the tagged books slice to JSON
-	taggedJsonData, err := json.MarshalIndent(tagged_books, "", "  ")
-	if err != nil {
-		log.Fatalf("Error marshaling tagged books JSON: %s", err)
-	}
-
-	// Print the tagged books JSON to standard output
-	fmt.Println(string(taggedJsonData))
 
 	err = booktag.InsertTaggedBooks(tagged_books)
 	if err != nil {
 		log.Fatalf("Error inserting tagged books into database: %s", err)
 	}
+
+	log.Printf("Successfully processed and inserted %d tagged books into the database.", len(tagged_books))
 }

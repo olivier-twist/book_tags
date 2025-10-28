@@ -3,14 +3,19 @@ package booktag
 
 // Book struct holds the extracted book data.
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/generative-ai-go/genai"
 	_ "github.com/mattn/go-sqlite3"
@@ -18,6 +23,9 @@ import (
 )
 
 const dbFile = "db/taggedbooks.db"
+
+// --- Configuration for Local LLM (Ollama) ---
+const ollamaAPIURL = "http://localhost:11434/api/generate"
 
 // processCSV reads book data from an io.Reader (like a file or a string),
 // extracts columns 2, 3, 4, and 5 (index 1, 2, 3, 4), and returns a slice of Book structs.
@@ -234,4 +242,122 @@ func InsertTaggedBooks(taggedBooks []TaggedBook) error {
 
 	log.Printf("Successfully inserted %d records into the BOOK table in %s.", insertedCount, dbFile)
 	return nil
+}
+
+// createTaggingPrompt generates the instruction prompt for the LLM.
+func createTaggingPrompt(book Book) string {
+	return fmt.Sprintf(
+		"Analyze the following book and return a comma-separated list of 3-5 descriptive tags (e.g., 'Historical Fiction,War,Coming-of-Age'). DO NOT include any other text, quotes, or explanations.\nTitle: %s\nAuthor(s): %s (%s)\nAdditional Authors: %s",
+		book.Title,
+		book.Author,
+		book.AuthorLF,
+		book.AdditionalAuthors,
+	)
+}
+
+// callLocalLLM sends the request to the local LLM (Ollama) and returns the response text or an error.
+func callLocalLLM(modelName string, prompt string) (string, error) {
+	requestBody, err := json.Marshal(OllamaRequest{
+		Model:  modelName,
+		Prompt: prompt,
+		Stream: false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// 1. Send HTTP Request
+	resp, err := http.Post(ollamaAPIURL, "application/json", bytes.NewReader(requestBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to connect to local LLM API at %s. Ensure Ollama is running and the model '%s' is available: %w", ollamaAPIURL, modelName, err)
+	}
+	defer resp.Body.Close()
+
+	// 2. Read Response Body
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("LLM API returned non-200 status code %d. Response: %s", resp.StatusCode, string(body))
+	}
+
+	// 3. Decode Response
+	var ollamaResponse OllamaResponse
+	err = json.NewDecoder(resp.Body).Decode(&ollamaResponse)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode LLM response: %w", err)
+	}
+
+	return ollamaResponse.Response, nil
+}
+
+// ProcessBooksWithLocalLLM takes a slice of books and a local model name,
+// sends tagging requests concurrently to the local LLM (Ollama), and returns a flattened list of tagged books,
+// where each returned TaggedBook contains a single tag.
+func ProcessBooksWithLocalLLM(books []Book, modelName string) ([]TaggedBook, error) {
+	if len(books) == 0 {
+		return nil, fmt.Errorf("input book list is empty")
+	}
+
+	log.Printf("Starting concurrent tagging for %d books using local model: %s at %s", len(books), modelName, ollamaAPIURL)
+	startTime := time.Now()
+
+	var wg sync.WaitGroup
+	// Limit concurrency to 10 requests to avoid overwhelming the local machine/LLM server.
+	semaphore := make(chan struct{}, 10)
+
+	// Mutex to protect shared resource (the final taggedBooks slice) during concurrent writes.
+	var mu sync.Mutex
+	// Create a slice to hold the results, which will be dynamically appended to.
+	taggedBooks := make([]TaggedBook, 0)
+
+	for _, book := range books {
+		wg.Add(1)
+		semaphore <- struct{}{} // Acquire a slot
+
+		// Capture the loop variable for the goroutine
+		book := book
+
+		go func() {
+			defer wg.Done()
+			defer func() { <-semaphore }() // Release the slot
+
+			prompt := createTaggingPrompt(book)
+
+			// Call the local LLM
+			tagsStr, err := callLocalLLM(modelName, prompt)
+			if err != nil {
+				log.Printf("Error tagging book '%s': %v. Skipping.", book.Title, err)
+				// On error, create a TaggedBook with an error message
+				mu.Lock()
+				taggedBooks = append(taggedBooks, TaggedBook{Book: book, Tag: "Error: Could not retrieve tags"})
+				mu.Unlock()
+				return
+			}
+
+			// Split the returned string of tags and process each one
+			tags := strings.Split(tagsStr, ",")
+
+			// Process and append each individual tag
+			mu.Lock()
+			for _, tag := range tags {
+				// Clean up whitespace and ensure tag is not empty
+				cleanTag := strings.TrimSpace(tag)
+				if cleanTag != "" {
+					taggedBooks = append(taggedBooks, TaggedBook{
+						Book: book,
+						Tag:  cleanTag,
+					})
+				}
+			}
+			mu.Unlock()
+
+		}()
+	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+
+	duration := time.Since(startTime)
+	log.Printf("Finished processing %d books in %s. Resulted in %d individual tag entries.", len(books), duration, len(taggedBooks))
+
+	return taggedBooks, nil
 }
